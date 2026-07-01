@@ -4,8 +4,11 @@
 #include <ctime>
 #include <cmath>
 #include <chrono>
+#include <vector>
+#include <algorithm>
 
 using namespace std;
+
 void copyGrid(int dest[9][9], int src[9][9]) {
     for (int i = 0; i < 9; i++)
         for (int j = 0; j < 9; j++)
@@ -45,7 +48,6 @@ bool isValid(int grid[9][9], int row, int col, int num) {
     return true;
 }
 
-
 bool solveBacktracking(int grid[9][9]) {
     for (int i = 0; i < 9; i++) {
         for (int j = 0; j < 9; j++) {
@@ -55,14 +57,14 @@ bool solveBacktracking(int grid[9][9]) {
                         grid[i][j] = num;
                         if (solveBacktracking(grid))
                             return true;
-                        grid[i][j] = 0; // undo
+                        grid[i][j] = 0; 
                     }
                 }
-                return false; // no valid number found
+                return false; 
             }
         }
     }
-    return true; // all cells filled
+    return true;
 }
 
 int countConflicts(int grid[9][9]) {
@@ -175,12 +177,163 @@ bool solveSimulatedAnnealing(int grid[9][9], bool fixed[9][9]) {
     return currentCost == 0;
 }
 
+struct Individual {
+    int grid[9][9];
+    int cost;
+};
+
+bool compareIndividuals(const Individual& a, const Individual& b) {
+    return a.cost < b.cost;
+}
+
+bool solveGeneticAlgorithm(int grid[9][9], bool fixed[9][9]) {
+    const int POP_SIZE = 100;
+    const int MAX_GEN = 3000;
+    vector<Individual> pop(POP_SIZE);
+
+    for (int p = 0; p < POP_SIZE; p++) {
+        copyGrid(pop[p].grid, grid);
+        fillBoxes(pop[p].grid, fixed);
+        pop[p].cost = countConflicts(pop[p].grid);
+        if (pop[p].cost == 0) {
+            copyGrid(grid, pop[p].grid);
+            return true;
+        }
+    }
+
+    for (int gen = 0; gen < MAX_GEN; gen++) {
+        sort(pop.begin(), pop.end(), compareIndividuals);
+        if (pop[0].cost == 0) {
+            copyGrid(grid, pop[0].grid);
+            return true;
+        }
+
+        vector<Individual> nextGen;
+        for (int i = 0; i < POP_SIZE / 10; i++) {
+            nextGen.push_back(pop[i]);
+        }
+
+        while (nextGen.size() < POP_SIZE) {
+            int p1 = rand() % (POP_SIZE / 2);
+            int p2 = rand() % (POP_SIZE / 2);
+            Individual child = pop[p1];
+
+            for (int b = 0; b < 3; b++) { 
+                int boxR = rand() % 3; int boxC = rand() % 3;
+                int sr = boxR * 3, sc = boxC * 3;
+                for (int i = sr; i < sr + 3; i++) {
+                    for (int j = sc; j < sc + 3; j++) {
+                        child.grid[i][j] = pop[p2].grid[i][j];
+                    }
+                }
+            }
+
+            if (rand() % 100 < 80) { 
+                int boxR = rand() % 3; int boxC = rand() % 3;
+                int sr = boxR * 3, sc = boxC * 3;
+                int cells[9][2]; int cCount = 0;
+                for (int i = sr; i < sr + 3; i++)
+                    for (int j = sc; j < sc + 3; j++)
+                        if (!fixed[i][j]) { cells[cCount][0] = i; cells[cCount][1] = j; cCount++; }
+                
+                if (cCount >= 2) {
+                    int a = rand() % cCount; int b = rand() % cCount;
+                    while(a == b) b = rand() % cCount;
+                    int tmp = child.grid[cells[a][0]][cells[a][1]];
+                    child.grid[cells[a][0]][cells[a][1]] = child.grid[cells[b][0]][cells[b][1]];
+                    child.grid[cells[b][0]][cells[b][1]] = tmp;
+                }
+            }
+
+            child.cost = countConflicts(child.grid);
+            nextGen.push_back(child);
+        }
+        pop = nextGen;
+
+        if (gen % 300 == 0 && gen > 0) {
+            for (int p = POP_SIZE / 2; p < POP_SIZE; p++) {
+                copyGrid(pop[p].grid, grid);
+                fillBoxes(pop[p].grid, fixed);
+                pop[p].cost = countConflicts(pop[p].grid);
+            }
+        }
+    }
+
+    sort(pop.begin(), pop.end(), compareIndividuals);
+    copyGrid(grid, pop[0].grid);
+    return pop[0].cost == 0;
+}
+
+bool solveTabuSearch(int grid[9][9], bool fixed[9][9]) {
+    fillBoxes(grid, fixed);
+    int currentCost = countConflicts(grid);
+    if (currentCost == 0) return true;
+
+    int bestOverallCost = currentCost;
+    int tabuList[9][9] = {0}; 
+    int tabuTenure = 25;
+    int maxIter = 50000;
+
+    for (int iter = 0; iter < maxIter && currentCost > 0; iter++) {
+        int bestMoveCost = 9999;
+        int bestR1 = -1, bestC1 = -1, bestR2 = -1, bestC2 = -1;
+
+        int boxR = rand() % 3; int boxC = rand() % 3;
+        int sr = boxR * 3, sc = boxC * 3;
+
+        int cells[9][2]; int cCount = 0;
+        for (int i = sr; i < sr + 3; i++)
+            for (int j = sc; j < sc + 3; j++)
+                if (!fixed[i][j]) { cells[cCount][0] = i; cells[cCount][1] = j; cCount++; }
+
+        for (int attempt = 0; attempt < 15; attempt++) {
+            if (cCount < 2) break;
+            
+            int a = rand() % cCount; int b = rand() % cCount;
+            while (b == a) b = rand() % cCount;
+
+            int r1 = cells[a][0], c1 = cells[a][1];
+            int r2 = cells[b][0], c2 = cells[b][1];
+
+            int tmp = grid[r1][c1]; grid[r1][c1] = grid[r2][c2]; grid[r2][c2] = tmp;
+            int newCost = countConflicts(grid);
+            tmp = grid[r1][c1]; grid[r1][c1] = grid[r2][c2]; grid[r2][c2] = tmp;
+
+            bool isTabu = (tabuList[r1][c1] > iter || tabuList[r2][c2] > iter);
+            
+            if (!isTabu || newCost < bestOverallCost) {
+                if (newCost < bestMoveCost) {
+                    bestMoveCost = newCost;
+                    bestR1 = r1; bestC1 = c1; bestR2 = r2; bestC2 = c2;
+                }
+            }
+        }
+
+        if (bestR1 != -1) {
+            int tmp = grid[bestR1][bestC1];
+            grid[bestR1][bestC1] = grid[bestR2][bestC2];
+            grid[bestR2][bestC2] = tmp;
+
+            currentCost = bestMoveCost;
+            if (currentCost < bestOverallCost) bestOverallCost = currentCost;
+
+            tabuList[bestR1][bestC1] = iter + tabuTenure;
+            tabuList[bestR2][bestC2] = iter + tabuTenure;
+        } else {
+            fillBoxes(grid, fixed);
+            currentCost = countConflicts(grid);
+            memset(tabuList, 0, sizeof(tabuList));
+        }
+    }
+    return currentCost == 0;
+}
+
 int main() {
     srand((unsigned)time(0));
 
     int original[9][9];
 
-    cout << "SUDOKU SOLVER" << endl;
+    cout << "SUDOKU SOLVER (4 ALGORITHMS)" << endl;
     cout << endl;
     cout << "Enter the Sudoku puzzle row by row." << endl;
     cout << "Use 0 for empty cells." << endl;
@@ -199,6 +352,7 @@ int main() {
     printGrid(original);
     cout << endl;
 
+    // METHOD 1: BACKTRACKING
     {
         int grid[9][9];
         copyGrid(grid, original);
@@ -221,28 +375,23 @@ int main() {
         cout << endl;
     }
 
+    bool fixed[9][9];
+    for (int i = 0; i < 9; i++)
+        for (int j = 0; j < 9; j++)
+            fixed[i][j] = (original[i][j] != 0);
+
     {
         int grid[9][9];
-        copyGrid(grid, original);
-        bool fixed[9][9];
-        for (int i = 0; i < 9; i++)
-            for (int j = 0; j < 9; j++)
-                fixed[i][j] = (original[i][j] != 0);
-
-        cout << "========================================" << endl;
         cout << " Method 2: Simulated Annealing" << endl;
-        cout << "========================================" << endl;
 
         auto start = chrono::high_resolution_clock::now();
-
-        // Try multiple restarts since SA is stochastic
         bool solved = false;
         for (int attempt = 0; attempt < 10 && !solved; attempt++) {
             copyGrid(grid, original);
             solved = solveSimulatedAnnealing(grid, fixed);
         }
-
         auto end = chrono::high_resolution_clock::now();
+        
         double elapsed = chrono::duration<double, milli>(end - start).count();
 
         if (solved) {
@@ -255,7 +404,54 @@ int main() {
         cout << endl;
     }
 
-    cout << " Done!" << endl;
+    {
+        int grid[9][9];
+        cout << " Method 3: Genetic Algorithm" << endl;
 
+        auto start = chrono::high_resolution_clock::now();
+        bool solved = false;
+        for (int attempt = 0; attempt < 10 && !solved; attempt++) {
+            copyGrid(grid, original);
+            solved = solveGeneticAlgorithm(grid, fixed);
+        }
+        auto end = chrono::high_resolution_clock::now();
+
+        double elapsed = chrono::duration<double, milli>(end - start).count();
+
+        if (solved) {
+            printGrid(grid);
+            cout << "Time taken: " << elapsed << " ms" << endl;
+        } else {
+            cout << "Could not find solution (GA is stochastic, try again)." << endl;
+            cout << "Time taken: " << elapsed << " ms" << endl;
+        }
+        cout << endl;
+    }
+
+    {
+        int grid[9][9];
+        cout << " Method 4: Tabu Search" << endl;
+
+        auto start = chrono::high_resolution_clock::now();
+        bool solved = false;
+        for (int attempt = 0; attempt < 10 && !solved; attempt++) {
+            copyGrid(grid, original);
+            solved = solveTabuSearch(grid, fixed);
+        }
+        auto end = chrono::high_resolution_clock::now();
+
+        double elapsed = chrono::duration<double, milli>(end - start).count();
+
+        if (solved) {
+            printGrid(grid);
+            cout << "Time taken: " << elapsed << " ms" << endl;
+        } else {
+            cout << "Could not find solution (TS is stochastic, try again)." << endl;
+            cout << "Time taken: " << elapsed << " ms" << endl;
+        }
+        cout << endl;
+    }
+
+    cout << " Done!" << endl;
     return 0;
 }
